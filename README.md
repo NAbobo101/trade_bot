@@ -32,7 +32,7 @@ trading-bot/
 ### 1. Clone o repositório ou copie os arquivos
 
 ```
-git clone https://github.com/NAbobo101/trading-bot.git
+git clone https://github.com/NAbobo101/trade-bot.git
 cd trading-bot
 ```
 
