@@ -9,8 +9,8 @@ from datetime import datetime, UTC
 
 # ================== CONFIGURAÇÃO DA EXCHANGE ====================
 exchange = ccxt.bybit({
-    'apiKey': 'ljaJqxO57RRzP7YswI',
-    'secret': 'uzFYCAaTa5wudw2nnaVPcITTrYmGoX1AgdTb',
+    'apiKey': '',
+    'secret': '',
     'enableRateLimit': True,
     'timeout': 30000,
     'options': {
