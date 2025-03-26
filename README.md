@@ -41,7 +41,7 @@ cd trade_bot
 ```
 python -m venv venv
 source venv/bin/activate   # Linux/macOS
-venv\Scripts\activate.bat  # Windows
+venv\Scripts\Activate  # Windows
 ```
 
 ### 3. Instale as dependências
