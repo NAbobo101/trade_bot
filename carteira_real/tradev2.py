@@ -7,10 +7,32 @@ import numpy as np
 import openpyxl
 from datetime import datetime, UTC
 
+# ======================== LEITURA DE CREDENCIAIS ========================
+def obter_credenciais():
+    caminho_credenciais = "credenciais.txt"
+
+    if not os.path.exists(caminho_credenciais):
+        print("🔐 Primeira execução detectada. Insira suas credenciais da API da Bybit.")
+        api_key = input("Digite sua API Key: ").strip()
+        api_secret = input("Digite seu Secret Key: ").strip()
+
+        with open(caminho_credenciais, "w", encoding="utf-8") as f:
+            f.write(f"{api_key}\n{api_secret}\n")
+        print("✅ Credenciais salvas com sucesso.")
+    else:
+        with open(caminho_credenciais, "r", encoding="utf-8") as f:
+            linhas = f.readlines()
+            api_key = linhas[0].strip()
+            api_secret = linhas[1].strip()
+
+    return api_key, api_secret
+
 # ================== CONFIGURAÇÃO DA EXCHANGE ====================
+api_key, api_secret = obter_credenciais()
+
 exchange = ccxt.bybit({
-    'apiKey': '',
-    'secret': '',
+    'apiKey': api_key,
+    'secret': api_secret,
     'enableRateLimit': True,
     'timeout': 30000,
     'options': {
