@@ -33,7 +33,7 @@ trading-bot/
 
 ```
 git clone https://github.com/NAbobo101/trade_bot.git
-cd trading-bot
+cd trade_bot
 ```
 
 ### 2. (Opcional) Crie e ative um ambiente virtual
