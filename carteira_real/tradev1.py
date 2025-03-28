@@ -44,13 +44,13 @@ exchange = ccxt.bybit({
 USE_SANDBOX = False
 exchange.set_sandbox_mode(USE_SANDBOX)
 exchange.load_markets()
-# exchange.verbose = True  # Ative para debug detalhado
 
 symbols = ['BTC/USDT', 'ETH/USDT']
 risk_per_trade = 0.05
 timeframe = '5m'
 log_file_path = "trades_log.txt"
 ordens_abertas_por_simbolo = set()
+posicoes_abertas = {}  # Novo dicionário para rastrear posições compradas
 
 # ======================== LOG UTILITÁRIO ========================
 def log(mensagem):
@@ -60,126 +60,47 @@ def log(mensagem):
     with open(log_file_path, "a", encoding="utf-8") as f:
         f.write(log_msg + "\n")
 
-# ======================== SYNC TEMPO ========================
-def sincronizar_tempo():
+# ======================== GATILHO DE VENDA (GATILHO POR TENDÊNCIA DE QUEDA + LUCRO) ========================
+def verificar_sinal_venda(symbol, df, preco_atual):
+    if symbol not in posicoes_abertas:
+        return False
+
+    entrada = posicoes_abertas[symbol]['preco_entrada']
+    lucro_minimo = entrada * 1.005  # lucro de pelo menos 0.5%
+
+    ema50 = df['EMA50'].iloc[-1]
+    ema200 = df['EMA200'].iloc[-1]
+
+    if preco_atual > lucro_minimo and ema50 < ema200:
+        return True
+
+    return False
+
+# ======================== VENDA ========================
+def executar_ordem_venda(symbol, preco):
     try:
-        exchange.load_time_difference()
-        log("⏳ Tempo sincronizado com a exchange.")
-    except Exception:
-        log("⚠ Erro ao sincronizar tempo: " + traceback.format_exc())
+        base = symbol.split("/")[0]  # Ex: BTC em BTC/USDT
+        saldo = exchange.fetch_balance()
+        qtd = saldo['free'].get(base, 0)
 
-# ======================== SALDO USDT ========================
-def obter_saldo_usdt():
-    try:
-        balance = exchange.fetch_balance()
-        usdt_balance = balance['free'].get('USDT', 0)
-        log(f"💰 Saldo atual em USDT: {usdt_balance:.2f}")
-        return usdt_balance
-    except Exception:
-        log("⚠ Erro ao obter saldo USDT: " + traceback.format_exc())
-        return 0
+        if qtd == 0:
+            log(f"⚠ Sem saldo disponível para venda de {base}.")
+            return
 
-# ======================== OHLCV ========================
-def obter_ohlcv(symbol, timeframe='1m', limit=300):
-    try:
-        return exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    except Exception:
-        log(f"⚠ Erro ao obter OHLCV de {symbol}")
-        return []
+        order = exchange.create_market_sell_order(symbol, qtd)
+        preco_venda = order.get('average') or order.get('price') or preco
 
-# ======================== ATR ========================
-def calcular_atr(ohlcv, period=14):
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['H-L'] = df['high'] - df['low']
-    df['H-PC'] = abs(df['high'] - df['close'].shift(1))
-    df['L-PC'] = abs(df['low'] - df['close'].shift(1))
-    df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
-    atr = df['TR'].rolling(window=period).mean().iloc[-1]
-    return round(atr, 4) if not np.isnan(atr) else None
+        log(f"📤 VENDA {symbol} | Qtd: {qtd} | Preço Médio: {preco_venda} | Ordem ID: {order['id']}")
 
-# ======================== BACKTEST ========================
-def backtest_simples(df, sl_pct=0.005, tp_pct=0.01):
-    capital = 1000
-    trades = []
-    entrou = 0
+        if symbol in ordens_abertas_por_simbolo:
+            ordens_abertas_por_simbolo.remove(symbol)
+        if symbol in posicoes_abertas:
+            del posicoes_abertas[symbol]
 
-    for i in range(200, len(df) - 50):
-        row = df.iloc[i]
-        ema50 = row['EMA50']
-        ema200 = row['EMA200']
-        preco_entrada = row['close']
+    except Exception as e:
+        log(f"⚠ Erro na ordem de venda para {symbol}:\n{str(e)}")
 
-        if ema50 > ema200:
-            entrou += 1
-            sl = preco_entrada * (1 - sl_pct)
-            tp = preco_entrada * (1 + tp_pct)
-            future = df.iloc[i+1:i+51]
-
-            for _, fut in future.iterrows():
-                if fut['low'] <= sl:
-                    capital *= (1 - sl_pct)
-                    trades.append('loss')
-                    break
-                elif fut['high'] >= tp:
-                    capital *= (1 + tp_pct)
-                    trades.append('win')
-                    break
-
-    if not trades:
-        log(f"📉 Backtest detectou {entrou} oportunidades, mas nenhum trade atingiu SL/TP.")
-        return 0, 0, 0
-
-    taxa_acerto = trades.count('win') / len(trades) * 100
-    lucro_pct = ((capital - 1000) / 1000) * 100
-    return len(trades), taxa_acerto, lucro_pct
-
-# ======================== EXCEL ========================
-def registrar_trade_excel(symbol, tipo, qtd, preco, ema50, ema200, atr, sl, tp):
-    arquivo = "trades.xlsx"
-    dados = {
-        'Data': datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
-        'Par': symbol,
-        'Tipo': tipo,
-        'Quantidade': qtd,
-        'Preço': preco,
-        'EMA50': ema50,
-        'EMA200': ema200,
-        'ATR': atr,
-        'Stop-Loss': sl,
-        'Take-Profit': tp
-    }
-    df = pd.DataFrame([dados])
-    if os.path.exists(arquivo):
-        with pd.ExcelWriter(arquivo, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-            df.to_excel(writer, sheet_name='Trades', index=False, header=False,
-                        startrow=writer.sheets['Trades'].max_row)
-    else:
-        df.to_excel(arquivo, sheet_name='Trades', index=False)
-
-# ======================== ORDENS ABERTAS ========================
-def verificar_ordens_abertas():
-    try:
-        log("🔍 Verificando ordens abertas existentes...")
-        for symbol in symbols:
-            market = exchange.market(symbol)
-            if market.get("spot", False):
-                params = {"category": "spot"}
-            elif market.get("linear", False):
-                params = {"category": "linear"}
-            else:
-                params = {"category": "linear"}
-
-            ordens = exchange.fetch_open_orders(symbol, params=params)
-
-            if ordens:
-                ordens_abertas_por_simbolo.add(symbol)
-                log(f"📌 Ordem aberta detectada para {symbol}. Ignorando esse par até que seja resolvido.")
-            else:
-                log(f"✅ Nenhuma ordem aberta para {symbol}.")
-    except Exception:
-        log("⚠ Erro ao verificar ordens abertas:\n" + traceback.format_exc())
-
-# ======================== COMPRA (VERSÃO SIMPLIFICADA) ========================
+# ======================== COMPRA ========================
 def executar_ordem_compra(symbol, qtd, preco, ema50, ema200, atr, sl, tp):
     try:
         if symbol in ordens_abertas_por_simbolo:
@@ -193,6 +114,7 @@ def executar_ordem_compra(symbol, qtd, preco, ema50, ema200, atr, sl, tp):
 
         registrar_trade_excel(symbol, 'buy', qtd, preco_pago, ema50, ema200, atr, sl, tp)
         ordens_abertas_por_simbolo.add(symbol)
+        posicoes_abertas[symbol] = {"qtd": qtd, "preco_entrada": preco_pago}
 
     except Exception as e:
         log(f"⚠ Erro na ordem de compra para {symbol}:\n{str(e)}")
