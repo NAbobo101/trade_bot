@@ -50,7 +50,7 @@ risk_per_trade = 0.05
 timeframe = '5m'
 log_file_path = "trades_log.txt"
 ordens_abertas_por_simbolo = set()
-posicoes_abertas = {}  # Novo dicionário para rastrear posições compradas
+posicoes_abertas = {}
 
 # ======================== LOG UTILITÁRIO ========================
 def log(mensagem):
@@ -60,13 +60,46 @@ def log(mensagem):
     with open(log_file_path, "a", encoding="utf-8") as f:
         f.write(log_msg + "\n")
 
-# ======================== GATILHO DE VENDA (GATILHO POR TENDÊNCIA DE QUEDA + LUCRO) ========================
+# ======================== CALCULAR ATR ========================
+def calcular_atr(ohlcv, period=14):
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['H-L'] = df['high'] - df['low']
+    df['H-PC'] = abs(df['high'] - df['close'].shift(1))
+    df['L-PC'] = abs(df['low'] - df['close'].shift(1))
+    df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
+    atr = df['TR'].rolling(window=period).mean().iloc[-1]
+    return round(atr, 4) if not np.isnan(atr) else None
+
+# ======================== REGISTRO EM EXCEL ========================
+def registrar_trade_excel(symbol, tipo, qtd, preco, ema50, ema200, atr, sl, tp):
+    arquivo = "trades.xlsx"
+    dados = {
+        'Data': datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
+        'Par': symbol,
+        'Tipo': tipo,
+        'Quantidade': qtd,
+        'Preço': preco,
+        'EMA50': ema50,
+        'EMA200': ema200,
+        'ATR': atr,
+        'Stop-Loss': sl,
+        'Take-Profit': tp
+    }
+    df = pd.DataFrame([dados])
+    if os.path.exists(arquivo):
+        with pd.ExcelWriter(arquivo, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+            df.to_excel(writer, sheet_name='Trades', index=False, header=False,
+                        startrow=writer.sheets['Trades'].max_row)
+    else:
+        df.to_excel(arquivo, sheet_name='Trades', index=False)
+
+# ======================== VENDA (GATILHO POR TENDÊNCIA DE QUEDA + LUCRO) ========================
 def verificar_sinal_venda(symbol, df, preco_atual):
     if symbol not in posicoes_abertas:
         return False
 
     entrada = posicoes_abertas[symbol]['preco_entrada']
-    lucro_minimo = entrada * 1.005  # lucro de pelo menos 0.5%
+    lucro_minimo = entrada * 1.005
 
     ema50 = df['EMA50'].iloc[-1]
     ema200 = df['EMA200'].iloc[-1]
@@ -79,7 +112,7 @@ def verificar_sinal_venda(symbol, df, preco_atual):
 # ======================== VENDA ========================
 def executar_ordem_venda(symbol, preco):
     try:
-        base = symbol.split("/")[0]  # Ex: BTC em BTC/USDT
+        base = symbol.split("/")[0]
         saldo = exchange.fetch_balance()
         qtd = saldo['free'].get(base, 0)
 
@@ -118,3 +151,44 @@ def executar_ordem_compra(symbol, qtd, preco, ema50, ema200, atr, sl, tp):
 
     except Exception as e:
         log(f"⚠ Erro na ordem de compra para {symbol}:\n{str(e)}")
+
+# ======================== ESTRATÉGIA ========================
+def estrategia_scalping_com_backtest():
+    log("🚀 Iniciando estratégia Scalping com controle de tendência e lucro")
+    while True:
+        try:
+            saldo_usdt = exchange.fetch_balance()['free'].get('USDT', 0)
+            for symbol in symbols:
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=300)
+                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['EMA50'] = df['close'].ewm(span=50).mean()
+                df['EMA200'] = df['close'].ewm(span=200).mean()
+                preco_atual = df['close'].iloc[-1]
+
+                if verificar_sinal_venda(symbol, df, preco_atual):
+                    log(f"🔻 Sinal de VENDA identificado para {symbol}")
+                    executar_ordem_venda(symbol, preco_atual)
+                    continue
+
+                ema50 = df['EMA50'].iloc[-1]
+                ema200 = df['EMA200'].iloc[-1]
+                if ema50 > ema200 and symbol not in posicoes_abertas:
+                    atr = calcular_atr(ohlcv[-100:], period=14)
+                    tp_pct = 0.01
+                    sl_pct = 0.005
+                    sl = round(preco_atual * (1 - sl_pct), 2)
+                    tp = round(preco_atual * (1 + tp_pct), 2)
+                    qtd = round((saldo_usdt * risk_per_trade) / preco_atual, 6)
+
+                    log(f"🧠 Sinal de COMPRA identificado para {symbol}")
+                    executar_ordem_compra(symbol, qtd, preco_atual, ema50, ema200, atr, sl, tp)
+
+            time.sleep(60)
+
+        except Exception:
+            log("🔥 Erro na estratégia:\n" + traceback.format_exc())
+            time.sleep(60)
+
+# ======================== EXECUÇÃO ========================
+if __name__ == "__main__":
+    estrategia_scalping_com_backtest()
