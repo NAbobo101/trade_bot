@@ -179,118 +179,20 @@ def verificar_ordens_abertas():
     except Exception:
         log("⚠ Erro ao verificar ordens abertas:\n" + traceback.format_exc())
 
-# ======================== COMPRA ========================
+# ======================== COMPRA (VERSÃO SIMPLIFICADA) ========================
 def executar_ordem_compra(symbol, qtd, preco, ema50, ema200, atr, sl, tp):
     try:
-        if not all([symbol, qtd, preco]):
-            raise ValueError("❌ Parâmetros inválidos para criação da ordem.")
-
         if symbol in ordens_abertas_por_simbolo:
-            log(f"⚠ Ordem já aberta anteriormente para {symbol}. Ignorando nova entrada.")
+            log(f"⚠ Ordem já aberta para {symbol}. Ignorando nova entrada.")
             return
 
-        market = exchange.market(symbol)
-        min_qty = market['limits']['amount']['min']
-        min_cost = market['limits'].get('cost', {}).get('min', 5.0)
+        order = exchange.create_market_buy_order(symbol, qtd)
+        preco_pago = order.get('average') or order.get('price') or preco
 
-        valor_total = qtd * preco
+        log(f"💰 COMPRA {symbol} | Qtd: {qtd} | Preço Médio: {preco_pago} | Ordem ID: {order['id']}")
 
-        if valor_total < min_cost:
-            log(f"⚠ Valor da ordem {symbol} ({valor_total:.2f}) < mínimo permitido ({min_cost:.2f}). Ajustando para 5 USDT.")
-            qtd = round(5 / preco, 6)
-
-        if min_qty and qtd < min_qty:
-            log(f"⚠ Qtd para {symbol} ({qtd}) < mínimo permitido ({min_qty}). Ajustando...")
-            qtd = round(min_qty, 6)
-
-        qtd = round(qtd, int(market['precision']['amount']))
-        preco = round(preco, int(market['precision']['price']))
-
-        if market.get("spot", False):
-            params = {"category": "spot"}
-        elif market.get("linear", False):
-            params = {"category": "linear"}
-        else:
-            params = {"category": "linear"}
-
-        order = exchange.create_limit_buy_order(symbol, qtd, preco, params)
-
-        order_id = order.get('id', 'N/A')
-        log(f"💰 COMPRA {symbol} | Qtd: {qtd} | Preço: {preco} | Ordem ID: {order_id}")
-        registrar_trade_excel(symbol, 'buy', qtd, preco, ema50, ema200, atr, sl, tp)
-
+        registrar_trade_excel(symbol, 'buy', qtd, preco_pago, ema50, ema200, atr, sl, tp)
         ordens_abertas_por_simbolo.add(symbol)
 
-    except Exception:
-        log(f"⚠ Erro ao executar ordem de compra para {symbol}:\n" + traceback.format_exc())
-
-# ======================== ESTRATÉGIA PRINCIPAL ========================
-def estrategia_scalping_com_backtest():
-    log("🚀 Iniciando estratégia Scalping + Tendência + Backtest automático")
-    while True:
-        try:
-            usdt = obter_saldo_usdt()
-            if usdt < 10:
-                log("⚠ Saldo insuficiente em USDT.")
-                time.sleep(60)
-                continue
-
-            for symbol in symbols:
-                if symbol in ordens_abertas_por_simbolo:
-                    log(f"⚠ Já existe ordem aberta para {symbol}. Ignorando...")
-                    continue
-
-                if symbol not in exchange.markets:
-                    log(f"⚠ Símbolo {symbol} não encontrado na exchange.")
-                    continue
-
-                ohlcv = obter_ohlcv(symbol, timeframe, 300)
-                if not ohlcv:
-                    continue
-
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                df['EMA50'] = df['close'].ewm(span=50).mean()
-                df['EMA200'] = df['close'].ewm(span=200).mean()
-                closes = df['close'].tolist()
-                preco_atual = closes[-1]
-                ema50 = df['EMA50'].iloc[-1]
-                ema200 = df['EMA200'].iloc[-1]
-                atr = calcular_atr(ohlcv[-100:], period=14)
-
-                log(f"📈 {symbol} | EMA50: {ema50:.2f} | EMA200: {ema200:.2f} | ATR: {atr if atr else 'N/A'}")
-
-                if atr is None:
-                    log(f"⚠ ATR não pôde ser calculado para {symbol}. Ignorando...")
-                    continue
-
-                if ema50 <= ema200:
-                    log(f"⏸️ Tendência não favorável para {symbol} (EMA50 <= EMA200). Ignorando...")
-                    continue
-
-                trades_sim, acerto, lucro_sim = backtest_simples(df)
-                log(f"📊 Backtest {symbol} | Trades: {trades_sim} | Acerto: {acerto:.1f}% | Lucro: {lucro_sim:.2f}%")
-
-                if lucro_sim < 0:
-                    log(f"⛔ Backtest ruim para {symbol}. Ignorando trade.")
-                    continue
-
-                tp_pct = 0.01
-                sl_pct = 0.005
-                tp = round(preco_atual * (1 + tp_pct), 2)
-                sl = round(preco_atual * (1 - sl_pct), 2)
-                qtd = round((usdt * risk_per_trade) / preco_atual, 6)
-
-                log(f"🧠 Sinal confirmado para {symbol}. Executando compra...")
-                executar_ordem_compra(symbol, qtd, preco_atual, ema50, ema200, atr, sl, tp)
-
-            time.sleep(60)
-
-        except Exception:
-            log("🔥 Erro na estratégia:\n" + traceback.format_exc())
-            time.sleep(60)
-
-# ======================== EXECUÇÃO ========================
-if __name__ == "__main__":
-    sincronizar_tempo()
-    verificar_ordens_abertas()
-    estrategia_scalping_com_backtest()
+    except Exception as e:
+        log(f"⚠ Erro na ordem de compra para {symbol}:\n{str(e)}")
