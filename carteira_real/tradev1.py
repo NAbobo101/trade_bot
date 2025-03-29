@@ -51,6 +51,8 @@ timeframe = '5m'
 log_file_path = "trades_log.txt"
 ordens_abertas_por_simbolo = set()
 posicoes_abertas = {}
+contador_logs = {symbol: 0 for symbol in symbols}
+trailing_stops = {}  # Novo: controle do trailing stop
 
 # ======================== LOG UTILITÁRIO ========================
 def log(mensagem):
@@ -93,18 +95,19 @@ def registrar_trade_excel(symbol, tipo, qtd, preco, ema50, ema200, atr, sl, tp):
     else:
         df.to_excel(arquivo, sheet_name='Trades', index=False)
 
-# ======================== VENDA (GATILHO POR TENDÊNCIA DE QUEDA + LUCRO) ========================
-def verificar_sinal_venda(symbol, df, preco_atual):
-    if symbol not in posicoes_abertas:
+# ======================== VERIFICAR TRAILING STOP ========================
+def verificar_trailing_stop(symbol, preco_atual):
+    if symbol not in trailing_stops:
         return False
 
-    entrada = posicoes_abertas[symbol]['preco_entrada']
-    lucro_minimo = entrada * 1.005
+    trailing = trailing_stops[symbol]
+    entrada = trailing['entrada']
+    melhor_preco = trailing['melhor']
+    distancia_pct = 0.005  # 0.5%
 
-    ema50 = df['EMA50'].iloc[-1]
-    ema200 = df['EMA200'].iloc[-1]
-
-    if preco_atual > lucro_minimo and ema50 < ema200:
+    if preco_atual > melhor_preco:
+        trailing['melhor'] = preco_atual
+    elif preco_atual < melhor_preco * (1 - distancia_pct):
         return True
 
     return False
@@ -129,6 +132,8 @@ def executar_ordem_venda(symbol, preco):
             ordens_abertas_por_simbolo.remove(symbol)
         if symbol in posicoes_abertas:
             del posicoes_abertas[symbol]
+        if symbol in trailing_stops:
+            del trailing_stops[symbol]
 
     except Exception as e:
         log(f"⚠ Erro na ordem de venda para {symbol}:\n{str(e)}")
@@ -148,6 +153,7 @@ def executar_ordem_compra(symbol, qtd, preco, ema50, ema200, atr, sl, tp):
         registrar_trade_excel(symbol, 'buy', qtd, preco_pago, ema50, ema200, atr, sl, tp)
         ordens_abertas_por_simbolo.add(symbol)
         posicoes_abertas[symbol] = {"qtd": qtd, "preco_entrada": preco_pago}
+        trailing_stops[symbol] = {"entrada": preco_pago, "melhor": preco_pago}
 
     except Exception as e:
         log(f"⚠ Erro na ordem de compra para {symbol}:\n{str(e)}")
@@ -165,8 +171,10 @@ def estrategia_scalping_com_backtest():
                 df['EMA200'] = df['close'].ewm(span=200).mean()
                 preco_atual = df['close'].iloc[-1]
 
-                if verificar_sinal_venda(symbol, df, preco_atual):
-                    log(f"🔻 Sinal de VENDA identificado para {symbol}")
+                log(f"🔍 Analisando {symbol} | Preço atual: {preco_atual:.2f}")
+
+                if verificar_trailing_stop(symbol, preco_atual):
+                    log(f"📉 Trailing Stop ativado para {symbol}. Realizando venda.")
                     executar_ordem_venda(symbol, preco_atual)
                     continue
 
@@ -182,6 +190,10 @@ def estrategia_scalping_com_backtest():
 
                     log(f"🧠 Sinal de COMPRA identificado para {symbol}")
                     executar_ordem_compra(symbol, qtd, preco_atual, ema50, ema200, atr, sl, tp)
+                else:
+                    contador_logs[symbol] += 1
+                    if contador_logs[symbol] % 5 == 0:
+                        log(f"⏸️ Nenhum sinal confirmado para {symbol}. Aguardando oportunidade...")
 
             time.sleep(60)
 
