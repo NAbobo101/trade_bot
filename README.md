@@ -53,6 +53,7 @@ pip install -r requirements.txt
 ### 4. Execute o bot
 
 ```
+cd carteira_real
 python tradev1.py
 ```
 
