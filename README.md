@@ -4,6 +4,8 @@ Este projeto implementa um **bot de trading automatizado** para a exchange **Byb
 
 O bot calcula indicadores técnicos (EMA, ATR), verifica ordens abertas, gerencia risco, registra operações em Excel e executa ordens de compra automaticamente com base nas condições de entrada.
 
+O bot ainda está em desenvolvimento, atualizações no código irão surgir durante o tempo. Fique ligado.
+
 ## ✅ Funcionalidades
 
 - 📈 Cálculo de indicadores técnicos (EMA50, EMA200, ATR)  
